@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.idea/
+.vscode/
+*.egg-info/
+
+# Generated sample resumes (recreate with: python samples/generate_samples.py)
+samples/resume.pdf
+samples/resume.docx
+samples/resume.png
+samples/resume.jpg
+samples/resume.txt
+
+# Never commit real resumes
+uploads/
+*.local

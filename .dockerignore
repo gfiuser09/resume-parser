@@ -1,0 +1,31 @@
+.git
+.gitignore
+.github
+
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Dev-only material: not needed in a runtime image
+tests/
+requirements-dev.txt
+.idea/
+.vscode/
+
+# Generated samples (regenerate inside the container if needed)
+samples/resume.pdf
+samples/resume.docx
+samples/resume.png
+samples/resume.jpg
+samples/resume.txt
+
+# Never bake real resumes into an image
+uploads/
+*.local
+Dockerfile
+docker-compose.yml
+.dockerignore
