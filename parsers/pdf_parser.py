@@ -15,6 +15,19 @@ except ImportError:  # pragma: no cover
         fitz = None
 
 
+def _page_links(page):
+    """Return the external URLs a PDF page links to."""
+    found = []
+    try:
+        for link in page.get_links():
+            uri = (link or {}).get("uri")
+            if uri and uri.lower().startswith(("http://", "https://")):
+                found.append(uri)
+    except Exception:
+        pass  # the link table is optional metadata; never fail a parse over it
+    return found
+
+
 def extract_text(path):
     """Return the plain text of the PDF at *path*.
 
@@ -51,16 +64,20 @@ def extract_text(path):
             raise CorruptedFile("PDF is password protected")
 
         pages = []
+        links = []
         for page in document:
             try:
                 pages.append(page.get_text("text"))
+                links.extend(_page_links(page))
             except Exception:
                 # Skip an unreadable page rather than failing the whole file.
                 continue
     finally:
         document.close()
 
-    text = "\n".join(pages).strip()
+    # Resumes usually hyperlink the words "LinkedIn"/"GitHub" instead of
+    # printing the URL, so the targets are appended for the extractors to find.
+    text = "\n".join(pages + sorted(set(links))).strip()
     if not text:
         raise TextExtractionError(
             "No selectable text found in the PDF. It may be a scanned document - "

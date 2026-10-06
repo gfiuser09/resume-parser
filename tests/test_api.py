@@ -9,7 +9,12 @@ import pytest
 from samples.generate_samples import RESUME_TEXT
 
 SAMPLES = os.path.join(os.path.dirname(os.path.dirname(__file__)), "samples")
-EXPECTED_KEYS = ["candidate_name", "email", "skills", "education", "experience"]
+#: Full field set, in the order the API documents it.
+EXPECTED_KEYS = [
+    "candidate_name", "email", "phone", "linkedin_url", "current_location",
+    "current_job_title", "current_company", "bio", "focus_area", "skills",
+    "sustainability_certifications", "education", "experience",
+]
 
 
 def sample(name):
@@ -30,6 +35,11 @@ def test_parses_text_documents(upload, filename):
     data = body["data"]
     assert data["candidate_name"] == "John A. Doe"
     assert data["email"] == "john.doe@example.com"
+    assert data["phone"] == "+91 98765 43210"
+    assert data["current_job_title"] == "Senior Backend Engineer"
+    assert data["current_company"] == "Acme Technologies Pvt Ltd"
+    assert data["current_location"] == "Bangalore, India"
+    assert data["bio"].startswith("Backend engineer with 6 years")
     assert {"Python", "Flask", "Docker", "PostgreSQL"} <= set(data["skills"])
     assert len(data["education"]) == 2
     assert data["education"][0]["degree"] == "B.Tech in Computer Science"

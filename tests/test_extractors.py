@@ -3,6 +3,7 @@
 import pytest
 
 from extractors import (
+    EMPTY_RESULT,
     ExtractionEngine,
     RuleBasedEngine,
     extract_resume_data,
@@ -210,13 +211,8 @@ def test_default_engine_is_rule_based():
 
 
 def test_result_shape_is_stable_for_empty_input():
-    assert extract_resume_data("") == {
-        "candidate_name": "",
-        "email": "",
-        "skills": [],
-        "education": [],
-        "experience": [],
-    }
+    assert extract_resume_data("") == EMPTY_RESULT
+    assert all(value in ("", []) for value in EMPTY_RESULT.values())
 
 
 def test_a_custom_engine_can_replace_the_default():
@@ -224,8 +220,7 @@ def test_a_custom_engine_can_replace_the_default():
         name = "stub"
 
         def extract(self, text):
-            return {"candidate_name": "Stub", "email": "", "skills": [],
-                    "education": [], "experience": []}
+            return dict(EMPTY_RESULT, candidate_name="Stub")
 
     register_engine(StubEngine)
     assert isinstance(get_engine("stub"), StubEngine)

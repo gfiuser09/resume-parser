@@ -21,6 +21,32 @@ touching the HTTP layer.
 
 ---
 
+## Data extracted
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `candidate_name` | string | explicit `Name:` label, else the first name-shaped header line, else derived from the e-mail |
+| `email` | string | regex, tolerant of OCR spacing (`john.doe @x.com`) |
+| `phone` | string | labelled lines accept 7+ digits, unlabelled need 9+, so year ranges are not mistaken for numbers |
+| `linkedin_url` | string | normalised to `https://www.linkedin.com/in/<slug>`; also read from PDF hyperlink targets when the resume only shows the word "LinkedIn" |
+| `current_location` | string | the current job's location, else a city/country line in the header, else an older job's location |
+| `current_job_title` | string | the job whose duration ends in "Present", else the most recent; falls back to a role line under the name |
+| `current_company` | string | employer of that same job |
+| `bio` | string | the summary/objective/profile section, collapsed to one paragraph (max 1200 chars) |
+| `focus_area` | list | work *domains* ("Carbon Accounting", "Backend Development"), ranked; headline mentions count double |
+| `skills` | list | skills section verbatim + a ~200-entry dictionary swept over the document |
+| `sustainability_certifications` | list | sustainability/ESG credentials only (LEED, GRI, ISO 14001, TCFD, ...); AWS or Scrum certificates are excluded by design |
+| `education` | list | `{degree, institution, year, details}` per entry |
+| `experience` | list | `{title, company, duration, location, description}` per entry |
+
+Anything not found comes back as `""` or `[]` rather than missing, so the
+response shape never varies.
+
+`focus_area` and `sustainability_certifications` are lists because a candidate
+can legitimately have several. Take `[0]` if your consumer needs one value.
+
+---
+
 ## Project structure
 
 ```text
@@ -38,8 +64,11 @@ resume-parser/
 │
 ├── extractors/                 # plain text -> structured data
 │   ├── __init__.py             # engine registry, extract_resume_data()
-│   ├── resume_extractor.py     # ExtractionEngine, RuleBasedEngine, name/email
+│   ├── resume_extractor.py     # engine interface, name/email, bio, current role
+│   ├── contact.py              # phone, LinkedIn URL, location
 │   ├── skills.py
+│   ├── focus.py                # focus areas (work domains)
+│   ├── certifications.py       # sustainability / ESG credentials
 │   ├── education.py
 │   └── experience.py
 │
@@ -54,7 +83,8 @@ resume-parser/
 ├── tests/
 │   ├── conftest.py
 │   ├── test_api.py
-│   └── test_extractors.py
+│   ├── test_extractors.py
+│   └── test_profile_fields.py
 │
 ├── Dockerfile                  # gunicorn + Tesseract, runs as non-root
 ├── docker-compose.yml
@@ -246,7 +276,7 @@ curl.exe -X POST http://localhost:5000/api/v1/parse-resume -F "file=@resume.pdf"
 
 ## Example response
 
-`200 OK`
+`200 OK` - the real output for `samples/resume.pdf`:
 
 ```json
 {
@@ -254,10 +284,31 @@ curl.exe -X POST http://localhost:5000/api/v1/parse-resume -F "file=@resume.pdf"
   "data": {
     "candidate_name": "John A. Doe",
     "email": "john.doe@example.com",
-    "skills": [
-      "Django", "Docker", "Flask", "Git", "Go", "JavaScript", "Kubernetes",
-      "PostgreSQL", "Python", "React", "Redis", "REST APIs", "SQL"
+    "phone": "+91 98765 43210",
+    "linkedin_url": "https://www.linkedin.com/in/johndoe",
+    "current_location": "Bangalore, India",
+    "current_job_title": "Senior Backend Engineer",
+    "current_company": "Acme Technologies Pvt Ltd",
+    "bio": "Backend engineer with 6 years of experience designing high-throughput APIs.",
+    "focus_area": [
+      "Backend Development"
     ],
+    "skills": [
+      "Django",
+      "Docker",
+      "Flask",
+      "Git",
+      "Go",
+      "JavaScript",
+      "Kubernetes",
+      "PostgreSQL",
+      "Python",
+      "React",
+      "Redis",
+      "REST APIs",
+      "SQL"
+    ],
+    "sustainability_certifications": [],
     "education": [
       {
         "degree": "B.Tech in Computer Science",
@@ -388,7 +439,7 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-62 tests cover both the HTTP layer (every status code above, plus temp-file
+96 tests cover both the HTTP layer (every status code above, plus temp-file
 cleanup) and the extraction rules. The image tests stub out Tesseract, so the
 whole suite passes without it installed.
 

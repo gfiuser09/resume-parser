@@ -13,19 +13,25 @@ Registering a smarter engine later::
         name = "llm"
 
         def extract(self, text):
-            ...  # call a model, return the same dictionary shape
+            ...  # call a model, return the shape of EMPTY_RESULT
 
     register_engine(LLMEngine)
 """
 
 import os
 
+from .certifications import extract_sustainability_certifications
+from .contact import extract_current_location, extract_linkedin_url, extract_phone
 from .education import extract_education
 from .experience import extract_experience
+from .focus import extract_focus_area
 from .resume_extractor import (
     EMPTY_RESULT,
     ExtractionEngine,
     RuleBasedEngine,
+    extract_bio,
+    extract_current_company,
+    extract_current_job_title,
     extract_email,
     extract_name,
 )
@@ -68,12 +74,20 @@ __all__ = [
     "ENGINES",
     "ExtractionEngine",
     "RuleBasedEngine",
+    "extract_bio",
+    "extract_current_company",
+    "extract_current_job_title",
+    "extract_current_location",
     "extract_education",
     "extract_email",
     "extract_experience",
+    "extract_focus_area",
+    "extract_linkedin_url",
     "extract_name",
+    "extract_phone",
     "extract_resume_data",
     "extract_skills",
+    "extract_sustainability_certifications",
     "get_engine",
     "register_engine",
 ]

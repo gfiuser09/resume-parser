@@ -90,8 +90,12 @@ MAX_ENTRIES = 15
 MAX_DESCRIPTION_CHARS = 1200
 
 
-def _looks_like_title(segment):
-    """True when *segment* reads like a job title."""
+def looks_like_title(segment):
+    """True when *segment* reads like a job title.
+
+    Public because :mod:`extractors.resume_extractor` reuses it to spot a role
+    stated in the header block, under the candidate's name.
+    """
     if not segment or len(segment) > 70:
         return False
     return bool(_TITLE_RE.search(segment) or _SENIORITY_RE.match(segment))
@@ -180,7 +184,7 @@ def _group_lines(section_text):
             continue
 
         is_header = _is_header_line(line) and (
-            _looks_like_title(line) or bool(DATE_RANGE_RE.search(line))
+            looks_like_title(line) or bool(DATE_RANGE_RE.search(line))
         )
         if is_header and has_header and current:
             groups.append("\n".join(current))
@@ -221,7 +225,7 @@ def _parse_entry(block):
             segment = strip_trailing_date(segment)
             if is_date_only(segment):
                 continue
-            if not title and _looks_like_title(segment):
+            if not title and looks_like_title(segment):
                 title = segment
                 line_named_job = True
             elif not location and _WORK_MODE_RE.match(segment):
@@ -274,7 +278,7 @@ def _fallback_blocks(text):
     blocks = []
     lines = list(iter_lines(text))
     for index, line in enumerate(lines):
-        if _looks_like_title(line) and DATE_RANGE_RE.search(line):
+        if looks_like_title(line) and DATE_RANGE_RE.search(line):
             blocks.append("\n".join(lines[index:index + 3]))
     return blocks
 

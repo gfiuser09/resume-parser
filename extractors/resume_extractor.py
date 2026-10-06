@@ -18,8 +18,11 @@ from utils.text_utils import (
     split_sections,
 )
 
+from .certifications import extract_sustainability_certifications
+from .contact import extract_current_location, extract_linkedin_url, extract_phone
 from .education import extract_education
 from .experience import extract_experience
+from .focus import extract_focus_area
 from .skills import extract_skills
 
 # ---------------------------------------------------------------------------
@@ -195,6 +198,75 @@ def extract_name(text, sections=None, email=""):
 
 
 # ---------------------------------------------------------------------------
+# Bio and current role
+# ---------------------------------------------------------------------------
+
+MAX_BIO_CHARS = 1200
+
+#: Durations that mean "still working here".
+_ONGOING_RE = re.compile(r"\b(?:present|current(?:ly)?|now|ongoing|to\s?date)\b",
+                         re.IGNORECASE)
+
+
+def extract_bio(text, sections=None):
+    """Return the candidate's summary/objective paragraph, or an empty string.
+
+    Line breaks inside the section are collapsed, since PDF extraction wraps
+    mid-sentence and the field is meant to be stored as one paragraph.
+    """
+    sections = sections or {}
+    body = get_section(sections, "summary")
+    if not body:
+        return ""
+
+    paragraph = " ".join(clean_line(line) for line in iter_lines(body))
+    paragraph = re.sub(r"\s{2,}", " ", paragraph).strip()
+    if len(paragraph) <= MAX_BIO_CHARS:
+        return paragraph
+    # Trim to the last sentence that fits, rather than mid-word.
+    cut = paragraph[:MAX_BIO_CHARS]
+    stop = cut.rfind(". ")
+    return (cut[:stop + 1] if stop > MAX_BIO_CHARS // 2 else cut).strip()
+
+
+def _current_entry(experience):
+    """Return the job the candidate currently holds, or the most recent one."""
+    for entry in experience or []:
+        if _ONGOING_RE.search(entry.get("duration", "")):
+            return entry
+    # Resumes are reverse-chronological, so the first entry is the latest.
+    return (experience or [None])[0]
+
+
+def extract_current_job_title(text, sections=None, experience=None):
+    """Return the current job title, falling back to a headline role line."""
+    entry = _current_entry(experience)
+    if entry and entry.get("title"):
+        return entry["title"]
+    return _headline_role(sections)
+
+
+def extract_current_company(experience=None):
+    """Return the current employer, or an empty string."""
+    entry = _current_entry(experience)
+    return entry.get("company", "") if entry else ""
+
+
+def _headline_role(sections):
+    """Find a role stated under the name, e.g. "Senior Backend Engineer"."""
+    from .experience import looks_like_title
+
+    header = get_section(sections or {}, "_preamble")
+    for line in list(iter_lines(header))[:6]:
+        for segment in re.split(r"\s*[|,]\s*|\s{3,}", clean_line(line)):
+            segment = segment.strip(" .")
+            if not segment or "@" in segment or any(c.isdigit() for c in segment):
+                continue
+            if looks_like_title(segment):
+                return segment
+    return ""
+
+# ---------------------------------------------------------------------------
 # Extraction engines
 # ---------------------------------------------------------------------------
 
@@ -210,7 +282,7 @@ class ExtractionEngine:
     name = "base"
 
     def extract(self, text):
-        """Return ``{candidate_name, email, skills, education, experience}``."""
+        """Return the field set documented by :data:`EMPTY_RESULT`."""
         raise NotImplementedError
 
     def __repr__(self):
@@ -227,20 +299,46 @@ class RuleBasedEngine(ExtractionEngine):
         sections = split_sections(text)
 
         email = extract_email(text)
+        name = extract_name(text, sections, email)
+        # Experience is computed first: the current role, employer and location
+        # are all read off the most recent entry.
+        experience = extract_experience(text, sections)
+
         return {
-            "candidate_name": extract_name(text, sections, email),
+            "candidate_name": name,
             "email": email,
+            "phone": extract_phone(text, sections),
+            "linkedin_url": extract_linkedin_url(text),
+            "current_location": extract_current_location(
+                text, sections, experience, name,
+                preferred=(_current_entry(experience) or {}).get("location", ""),
+            ),
+            "current_job_title": extract_current_job_title(text, sections, experience),
+            "current_company": extract_current_company(experience),
+            "bio": extract_bio(text, sections),
+            "focus_area": extract_focus_area(text, sections, experience),
             "skills": extract_skills(text, sections),
+            "sustainability_certifications":
+                extract_sustainability_certifications(text, sections),
             "education": extract_education(text, sections),
-            "experience": extract_experience(text, sections),
+            "experience": experience,
         }
 
 
-#: Shape returned for a document from which nothing could be recognised.
+#: Shape returned for a document from which nothing could be recognised. Also
+#: the canonical field order of the API response.
 EMPTY_RESULT = {
     "candidate_name": "",
     "email": "",
+    "phone": "",
+    "linkedin_url": "",
+    "current_location": "",
+    "current_job_title": "",
+    "current_company": "",
+    "bio": "",
+    "focus_area": [],
     "skills": [],
+    "sustainability_certifications": [],
     "education": [],
     "experience": [],
 }
