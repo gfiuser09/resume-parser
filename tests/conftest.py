@@ -50,7 +50,7 @@ def fake_ocr(monkeypatch):
     def _install(text=RESUME_TEXT):
         monkeypatch.setattr(
             image_parser.pytesseract, "image_to_string",
-            lambda image, lang=None, config=None: text,
+            lambda image, lang=None, config=None, timeout=None: text,
         )
 
     return _install

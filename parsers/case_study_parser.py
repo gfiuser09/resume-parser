@@ -10,7 +10,7 @@ import logging
 
 from utils.errors import CorruptedFile, OCRError, OCRNotAvailable
 
-from .image_parser import OCR_CONFIG, OCR_LANG, _preprocess
+from .image_parser import OCR_CONFIG, OCR_LANG, OCR_TIMEOUT_SECONDS, _preprocess
 from .image_parser import extract_text as extract_text_from_image
 
 try:  # PyMuPDF >= 1.24 prefers the "pymupdf" name; "fitz" is the legacy alias.
@@ -38,9 +38,14 @@ PDF_OCR_ZOOM = 200 / 72
 def _ocr_page_image(image):
     prepared = _preprocess(image)
     try:
-        return pytesseract.image_to_string(prepared, lang=OCR_LANG, config=OCR_CONFIG)
+        return pytesseract.image_to_string(
+            prepared, lang=OCR_LANG, config=OCR_CONFIG, timeout=OCR_TIMEOUT_SECONDS
+        )
     except pytesseract.TesseractNotFoundError as exc:
         raise OCRNotAvailable() from exc
+    except RuntimeError as exc:
+        logger.warning("tesseract timed out after %ss: %s", OCR_TIMEOUT_SECONDS, exc)
+        raise OCRError("OCR timed out while reading a page", status_code=504) from exc
     except pytesseract.TesseractError as exc:
         logger.warning("tesseract error: %s", exc)
         raise OCRError("OCR failed while reading a page") from exc

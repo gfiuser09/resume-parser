@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_TEMPERATURE = float(os.environ.get("GROQ_TEMPERATURE", 0.2))
 GROQ_MAX_TOKENS = int(os.environ.get("GROQ_MAX_TOKENS", 1536))
+#: Bounds how long a stalled network call can occupy a worker (the SDK has
+#: no timeout by default, which turns a stalled connection into a hang).
+GROQ_TIMEOUT_SECONDS = float(os.environ.get("GROQ_TIMEOUT_SECONDS", 60))
 
 #: Lazily created and cached; a fresh key set via the environment during
 #: tests still takes effect since the cache is only populated on first use.
@@ -37,7 +40,7 @@ def _get_client():
         raise GroqNotConfigured()
 
     if _client is None:
-        _client = groq.Groq(api_key=api_key)
+        _client = groq.Groq(api_key=api_key, timeout=GROQ_TIMEOUT_SECONDS)
     return _client
 
 
@@ -67,6 +70,9 @@ def chat_json(system_prompt, user_prompt):
         raise GroqError(
             "Summarisation service is rate limited, try again shortly", status_code=429
         ) from exc
+    except groq.APITimeoutError as exc:
+        logger.warning("Groq request timed out after %ss: %s", GROQ_TIMEOUT_SECONDS, exc)
+        raise GroqError("Summarisation service timed out", status_code=504) from exc
     except groq.APIConnectionError as exc:
         logger.warning("Groq connection error: %s", exc)
         raise GroqError("Could not reach the summarisation service", status_code=502) from exc

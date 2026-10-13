@@ -28,6 +28,10 @@ if TESSERACT_CMD and pytesseract is not None:  # pragma: no cover
 OCR_LANG = os.environ.get("OCR_LANG", "eng")
 #: Page segmentation mode 3 = fully automatic page layout analysis.
 OCR_CONFIG = os.environ.get("OCR_CONFIG", "--oem 3 --psm 3")
+#: Without this, a stuck Tesseract subprocess (seen on memory-constrained
+#: hosts) blocks forever and wedges the worker handling it for every future
+#: request, not just this one.
+OCR_TIMEOUT_SECONDS = int(os.environ.get("OCR_TIMEOUT_SECONDS", 60))
 
 
 def _preprocess(image):
@@ -69,9 +73,14 @@ def extract_text(path):
         raise CorruptedFile("The image file appears to be corrupted") from exc
 
     try:
-        text = pytesseract.image_to_string(prepared, lang=OCR_LANG, config=OCR_CONFIG)
+        text = pytesseract.image_to_string(
+            prepared, lang=OCR_LANG, config=OCR_CONFIG, timeout=OCR_TIMEOUT_SECONDS
+        )
     except pytesseract.TesseractNotFoundError as exc:
         raise OCRNotAvailable() from exc
+    except RuntimeError as exc:
+        logger.warning("tesseract timed out after %ss: %s", OCR_TIMEOUT_SECONDS, exc)
+        raise OCRError("OCR timed out while reading the image", status_code=504) from exc
     except pytesseract.TesseractError as exc:
         logger.warning("tesseract error: %s", exc)
         raise OCRError("OCR failed while reading the image") from exc
