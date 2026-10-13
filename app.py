@@ -1,6 +1,7 @@
-"""Flask application exposing the resume parser.
+"""Flask application exposing the resume parser and case-study extractor.
 
-    POST /api/v1/parse-resume    multipart/form-data, field name "file"
+    POST /api/v1/parse-resume        multipart/form-data, field name "file"
+    POST /api/v1/parse-case-study    multipart/form-data, field name "file"
 
 The request pipeline is intentionally thin:
 
@@ -11,12 +12,18 @@ The request pipeline is intentionally thin:
 import logging
 import os
 
+from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
+# Load GROQ_API_KEY and friends from a local .env file, if one exists.
+load_dotenv()
+
 from extractors import DEFAULT_ENGINE, extract_resume_data
+from extractors.case_study_extractor import extract_case_study_data
 from parsers import parse_file
-from utils.errors import NoFileUploaded, ResumeParserError
+from parsers import case_study_parser
+from utils.errors import NoFileUploaded, ResumeParserError, UnsupportedFileType
 from utils.file_handler import (
     ALLOWED_EXTENSIONS,
     MAX_FILE_SIZE,
@@ -26,6 +33,8 @@ from utils.file_handler import (
 
 UPLOAD_FIELD = "file"
 API_PREFIX = "/api/v1"
+CASE_STUDY_KINDS = {"pdf", "image"}
+CASE_STUDY_SUPPORTED_LABEL = "PDF, JPG, JPEG, PNG"
 
 logger = logging.getLogger("resume_parser")
 
@@ -69,6 +78,19 @@ def create_app(config=None):
     return app
 
 
+def _require_upload():
+    """Return the uploaded file storage, or raise :class:`NoFileUploaded`."""
+    storage = request.files.get(UPLOAD_FIELD)
+    if storage is None:
+        if request.files:
+            sent = ", ".join(sorted(request.files.keys()))
+            raise NoFileUploaded(
+                f"No '{UPLOAD_FIELD}' field in the request (received: {sent})"
+            )
+        raise NoFileUploaded()
+    return storage
+
+
 def register_routes(app):
 
     @app.get("/health")
@@ -85,15 +107,7 @@ def register_routes(app):
 
     @app.post(f"{API_PREFIX}/parse-resume")
     def parse_resume():
-        storage = request.files.get(UPLOAD_FIELD)
-        if storage is None:
-            # Help the caller spot a wrong field name quickly.
-            if request.files:
-                sent = ", ".join(sorted(request.files.keys()))
-                raise NoFileUploaded(
-                    f"No '{UPLOAD_FIELD}' field in the request (received: {sent})"
-                )
-            raise NoFileUploaded()
+        storage = _require_upload()
 
         with SavedUpload(storage) as upload:
             logger.info(
@@ -102,6 +116,26 @@ def register_routes(app):
             )
             text = parse_file(upload.path, upload.kind)
             data = extract_resume_data(text)
+
+        return jsonify({"success": True, "data": data})
+
+    @app.post(f"{API_PREFIX}/parse-case-study")
+    def parse_case_study():
+        storage = _require_upload()
+
+        with SavedUpload(storage) as upload:
+            if upload.kind not in CASE_STUDY_KINDS:
+                raise UnsupportedFileType(
+                    f"Case studies must be a PDF or image. Allowed types: "
+                    f"{CASE_STUDY_SUPPORTED_LABEL}"
+                )
+
+            logger.info(
+                "OCR'ing case study upload name=%s kind=%s bytes=%s",
+                upload.filename, upload.kind, upload.size,
+            )
+            text = case_study_parser.extract_text(upload.path, upload.kind)
+            data = extract_case_study_data(text)
 
         return jsonify({"success": True, "data": data})
 
@@ -127,7 +161,9 @@ def register_error_handlers(app):
     @app.errorhandler(405)
     def handle_method_not_allowed(error):
         return error_response(
-            f"Method not allowed. Use POST {API_PREFIX}/parse-resume", 405
+            f"Method not allowed. Use POST {API_PREFIX}/parse-resume or "
+            f"POST {API_PREFIX}/parse-case-study",
+            405,
         )
 
     @app.errorhandler(HTTPException)

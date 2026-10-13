@@ -158,8 +158,9 @@ python app.py
 The API is then available at `http://localhost:5000`.
 
 ```text
-POST /api/v1/parse-resume    parse a resume
-GET  /health                 engine, limits and supported types
+POST /api/v1/parse-resume        parse a resume
+POST /api/v1/parse-case-study    OCR + summarise a case-study PDF/image
+GET  /health                     engine, limits and supported types
 ```
 
 Configuration (all optional, read from the environment):
@@ -173,6 +174,8 @@ Configuration (all optional, read from the environment):
 | `TESSERACT_CMD` | – | Full path to `tesseract` if not on PATH |
 | `OCR_LANG` | `eng` | Tesseract language pack(s), e.g. `eng+deu` |
 | `EXTRACTION_ENGINE` | `rule-based` | Which registered engine to use |
+| `GROQ_API_KEY` | – | Required for `/parse-case-study`; get one at console.groq.com |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq model used to summarise case studies |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
 For production, run it behind a WSGI server instead of the dev server:
@@ -345,6 +348,56 @@ curl.exe -X POST http://localhost:5000/api/v1/parse-resume -F "file=@resume.pdf"
 
 Fields that cannot be found come back empty (`""` / `[]`) rather than missing,
 so the response shape is always the same.
+
+---
+
+## Case-study extraction
+
+```text
+Upload PDF/Image
+      |
+   Flask API                app.py
+      |
+ OCR every page              parsers/case_study_parser.py   (PyMuPDF render -> Tesseract OCR)
+      |
+Summarise with Groq          extractors/case_study_extractor.py
+      |
+  Return JSON
+```
+
+```bash
+curl -X POST http://localhost:5000/api/v1/parse-case-study -F "file=@case-study.pdf"
+```
+
+Unlike `/parse-resume`, this endpoint always goes through OCR (even for a PDF with
+a selectable text layer), since case studies are commonly scanned documents or
+flat image exports. A multi-page PDF has every page rendered to an image and
+OCR'd; the pages are then joined and sent to a Groq-hosted LLM in one request.
+Only PDF, JPG, JPEG and PNG are accepted - DOCX is rejected with `415`.
+
+`200 OK` response shape:
+
+```json
+{
+  "success": true,
+  "data": {
+    "title": "CSRD gap analysis for a European manufacturer",
+    "client_name": "Nordwind Industries",
+    "situation": "... 30-200 words ...",
+    "process": "... 25-200 words ...",
+    "results": "... 25-200 words ...",
+    "word_counts": { "situation": 42, "process": 31, "results": 38 }
+  }
+}
+```
+
+`client_name` comes back as `""` when the document does not name a client -
+the model is instructed to never invent one. `situation`/`process`/`results`
+are capped server-side at 200 words each (trimmed to the nearest sentence)
+regardless of what the model returns, since an LLM's compliance with a
+"max N words" instruction is a strong suggestion, not a guarantee.
+
+Requires `GROQ_API_KEY` to be set; without it the endpoint returns `503`.
 
 ---
 

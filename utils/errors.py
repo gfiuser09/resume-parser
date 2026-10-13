@@ -64,3 +64,16 @@ class OCRNotAvailable(ResumeParserError):
         "OCR engine (Tesseract) is not installed or not on PATH. "
         "Install Tesseract to parse image resumes"
     )
+
+
+class GroqNotConfigured(ResumeParserError):
+    status_code = 503
+    message = (
+        "Groq API key is not configured. Set the GROQ_API_KEY environment "
+        "variable to enable case-study summarisation"
+    )
+
+
+class GroqError(ResumeParserError):
+    status_code = 502
+    message = "Summarisation service failed to process the document"
