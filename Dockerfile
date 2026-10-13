@@ -37,7 +37,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request as u, sys; \
 sys.exit(0 if u.urlopen('http://127.0.0.1:5000/health', timeout=4).status == 200 else 1)"
 
-# Two workers handle concurrent uploads; the timeout leaves room for OCR, which
-# is the slowest path by far.
+# Two workers handle concurrent uploads. The timeout leaves room for a
+# multi-page case-study PDF: each page gets its own bounded OCR_TIMEOUT_SECONDS
+# (see parsers/image_parser.py), but a several-page document on a slow/shared
+# CPU can still legitimately take minutes end to end, so this needs to be
+# comfortably larger than pages * OCR_TIMEOUT_SECONDS + GROQ_TIMEOUT_SECONDS.
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "2", \
-     "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+     "--timeout", "240", "--access-logfile", "-", "--error-logfile", "-", "app:app"]

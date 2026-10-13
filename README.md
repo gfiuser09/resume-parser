@@ -173,10 +173,20 @@ Configuration (all optional, read from the environment):
 | `MAX_FILE_SIZE_BYTES` | `10485760` (10 MB) | Upload size limit |
 | `TESSERACT_CMD` | – | Full path to `tesseract` if not on PATH |
 | `OCR_LANG` | `eng` | Tesseract language pack(s), e.g. `eng+deu` |
+| `OCR_TIMEOUT_SECONDS` | `90` | Max time one page/image gets in Tesseract before failing with `504` instead of hanging the worker |
 | `EXTRACTION_ENGINE` | `rule-based` | Which registered engine to use |
 | `GROQ_API_KEY` | – | Required for `/parse-case-study`; get one at console.groq.com |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq model used to summarise case studies |
+| `GROQ_TIMEOUT_SECONDS` | `60` | Max time the Groq call gets before failing with `504` |
 | `LOG_LEVEL` | `INFO` | Logging level |
+
+A dense, multi-font scanned page can take Tesseract well over a minute on a
+slow or shared CPU (e.g. a free-tier host) — that's expected, not a bug. If
+`/parse-case-study` keeps returning `504 OCR timed out`, raise
+`OCR_TIMEOUT_SECONDS` (and `--timeout` in the [Dockerfile](Dockerfile)'s
+gunicorn command to stay comfortably above
+`pages * OCR_TIMEOUT_SECONDS + GROQ_TIMEOUT_SECONDS`), or move to an instance
+with more CPU.
 
 For production, run it behind a WSGI server instead of the dev server:
 

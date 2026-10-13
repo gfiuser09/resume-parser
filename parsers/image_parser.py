@@ -30,8 +30,10 @@ OCR_LANG = os.environ.get("OCR_LANG", "eng")
 OCR_CONFIG = os.environ.get("OCR_CONFIG", "--oem 3 --psm 3")
 #: Without this, a stuck Tesseract subprocess (seen on memory-constrained
 #: hosts) blocks forever and wedges the worker handling it for every future
-#: request, not just this one.
-OCR_TIMEOUT_SECONDS = int(os.environ.get("OCR_TIMEOUT_SECONDS", 60))
+#: request, not just this one. 90s gives a dense, multi-font page room to
+#: finish on a slow/shared CPU (e.g. a free-tier host) without being killed
+#: as if it were truly stuck.
+OCR_TIMEOUT_SECONDS = int(os.environ.get("OCR_TIMEOUT_SECONDS", 90))
 
 
 def _preprocess(image):
