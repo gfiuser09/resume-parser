@@ -2,6 +2,7 @@
 
     POST /api/v1/parse-resume        multipart/form-data, field name "file"
     POST /api/v1/parse-case-study    multipart/form-data, field name "file"
+    POST /api/v1/url-auto-fetch      application/json, body {"url": "..."}
 
 The request pipeline is intentionally thin:
 
@@ -20,16 +21,17 @@ from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 load_dotenv()
 
 from extractors import DEFAULT_ENGINE, extract_resume_data
-from extractors.case_study_extractor import extract_case_study_data
+from extractors.case_study_extractor import ensure_min_words, extract_case_study_data
 from parsers import parse_file
 from parsers import case_study_parser
-from utils.errors import NoFileUploaded, ResumeParserError, UnsupportedFileType
+from utils.errors import InvalidURL, NoFileUploaded, ResumeParserError, UnsupportedFileType
 from utils.file_handler import (
     ALLOWED_EXTENSIONS,
     MAX_FILE_SIZE,
     SUPPORTED_LABEL,
     SavedUpload,
 )
+from utils.url_fetcher import fetch_url_text
 
 UPLOAD_FIELD = "file"
 API_PREFIX = "/api/v1"
@@ -139,6 +141,20 @@ def register_routes(app):
 
         return jsonify({"success": True, "data": data})
 
+    @app.post(f"{API_PREFIX}/url-auto-fetch")
+    def url_auto_fetch():
+        payload = request.get_json(silent=True) or {}
+        url = payload.get("url")
+        if not url:
+            raise InvalidURL("No 'url' field in the JSON request body")
+
+        logger.info("fetching url=%s", url)
+        text = fetch_url_text(url)
+        data = extract_case_study_data(text)
+        data = ensure_min_words(data, text)
+
+        return jsonify({"success": True, "data": data})
+
 
 def register_error_handlers(app):
 
@@ -161,8 +177,8 @@ def register_error_handlers(app):
     @app.errorhandler(405)
     def handle_method_not_allowed(error):
         return error_response(
-            f"Method not allowed. Use POST {API_PREFIX}/parse-resume or "
-            f"POST {API_PREFIX}/parse-case-study",
+            f"Method not allowed. Use POST {API_PREFIX}/parse-resume, "
+            f"POST {API_PREFIX}/parse-case-study, or POST {API_PREFIX}/url-auto-fetch",
             405,
         )
 

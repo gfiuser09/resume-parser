@@ -77,3 +77,13 @@ class GroqNotConfigured(ResumeParserError):
 class GroqError(ResumeParserError):
     status_code = 502
     message = "Summarisation service failed to process the document"
+
+
+class InvalidURL(ResumeParserError):
+    status_code = 400
+    message = "Invalid or disallowed URL"
+
+
+class URLFetchError(ResumeParserError):
+    status_code = 502
+    message = "Failed to fetch the URL"

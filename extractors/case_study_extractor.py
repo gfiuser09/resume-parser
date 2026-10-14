@@ -7,6 +7,7 @@ since an LLM's compliance with "max N words" is a strong suggestion, not a
 guarantee.
 """
 
+from utils.errors import GroqError, GroqNotConfigured
 from utils.groq_client import chat_json
 
 #: field -> (min words, max words), as specified by the case-study form.
@@ -75,6 +76,51 @@ def _clamp_to_max_words(text, max_words):
     return truncated[: cut + 1] if cut > len(truncated) // 2 else truncated
 
 
+EXPAND_SYSTEM_PROMPT = """You lengthen one paragraph of a case-study submission so it meets a \
+minimum word count, using only facts grounded in the SOURCE TEXT provided. Never invent facts, \
+numbers, or claims that are not present in the source. Add genuine supporting detail (context, \
+specifics, elaboration) rather than padding or repeating what is already there.
+
+Respond with a JSON object: {"text": "..."}. The final text must be between MIN_WORDS and \
+MAX_WORDS words.
+"""
+
+
+def _expand_field(field, current_text, source_text):
+    min_words, max_words = WORD_LIMITS[field]
+    system = EXPAND_SYSTEM_PROMPT.replace("MIN_WORDS", str(min_words)).replace(
+        "MAX_WORDS", str(max_words)
+    )
+    user = (
+        f"SOURCE TEXT:\n'''\n{source_text}\n'''\n\n"
+        f"CURRENT {field.upper()} PARAGRAPH ({len(current_text.split())} words, "
+        f"needs at least {min_words}):\n'''\n{current_text}\n'''"
+    )
+    try:
+        raw = chat_json(system, user)
+    except (GroqError, GroqNotConfigured):
+        return current_text
+    text = raw.get("text") if isinstance(raw, dict) else None
+    return text.strip() if isinstance(text, str) and text.strip() else current_text
+
+
+def ensure_min_words(data, source_text):
+    """Best-effort top-up of any field under its minimum word count.
+
+    Costs one extra Groq call per short field, grounded in *source_text* so
+    no facts are invented; most inputs already clear the minimum on the
+    first pass, so this only adds latency when needed. Falls back to the
+    original text for a field if the expansion call itself fails.
+    """
+    for field, (min_words, max_words) in WORD_LIMITS.items():
+        if data["word_counts"][field] < min_words:
+            expanded = _expand_field(field, data[field], source_text)
+            expanded = _clamp_to_max_words(expanded, max_words)
+            data[field] = expanded
+            data["word_counts"][field] = len(expanded.split())
+    return data
+
+
 def extract_case_study_data(text):
     """Return the structured case-study fields extracted from OCR'd *text*."""
     text = (text or "").strip()
@@ -97,4 +143,4 @@ def extract_case_study_data(text):
     return data
 
 
-__all__ = ["EMPTY_RESULT", "WORD_LIMITS", "extract_case_study_data"]
+__all__ = ["EMPTY_RESULT", "WORD_LIMITS", "extract_case_study_data", "ensure_min_words"]
