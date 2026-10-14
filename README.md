@@ -160,6 +160,7 @@ The API is then available at `http://localhost:5000`.
 ```text
 POST /api/v1/parse-resume        parse a resume
 POST /api/v1/parse-case-study    OCR + summarise a case-study PDF/image
+POST /api/v1/url-auto-fetch      fetch a URL and summarise it as a case study
 GET  /health                     engine, limits and supported types
 ```
 
@@ -411,6 +412,30 @@ Requires `GROQ_API_KEY` to be set; without it the endpoint returns `503`.
 
 ---
 
+## URL auto-fetch
+
+```bash
+curl -X POST http://localhost:5000/api/v1/url-auto-fetch \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/our-case-study"}'
+```
+
+Fetches the page server-side, strips it to visible text, and runs it through
+the same Groq summarisation as `/parse-case-study`. If `situation`/`process`/
+`results` comes back under the form's minimum word count, one extra
+best-effort Groq call expands that field using only facts already present in
+the fetched page - never invented ones - before the response is returned.
+
+Response shape is identical to `/parse-case-study` above.
+
+Because this endpoint fetches a URL the caller supplies, requests are
+restricted to `http`/`https` and the resolved host must be a public address -
+requests to loopback, private, link-local (including the `169.254.169.254`
+cloud metadata address) or otherwise reserved ranges are rejected with `400`,
+and redirects are re-validated the same way before being followed.
+
+---
+
 ## Error responses
 
 Every failure returns the same shape:
@@ -433,7 +458,10 @@ Every failure returns the same shape:
 | Corrupted / unreadable file | `422` | `Could not open the PDF file. It may be corrupted, incomplete or not a valid PDF` |
 | No extractable text (e.g. scanned PDF) | `422` | `No selectable text found in the PDF...` |
 | OCR found no text | `422` | `OCR could not find any text in the image...` |
+| Invalid/disallowed URL (`/url-auto-fetch`) | `400` | `URL resolves to a disallowed address: 169.254.169.254` |
 | Tesseract not installed | `503` | `OCR engine (Tesseract) is not installed or not on PATH...` |
+| Could not reach the URL (`/url-auto-fetch`) | `502` | `Could not fetch URL: ...` |
+| Fetching the URL timed out (`/url-auto-fetch`) | `504` | `Fetching the URL timed out` |
 | Unexpected server error | `500` | `Internal server error while processing the resume` |
 
 Internal details (library messages, file paths) are logged server-side and never
