@@ -12,6 +12,7 @@ The request pipeline is intentionally thin:
 
 import logging
 import os
+import time
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
@@ -136,8 +137,18 @@ def register_routes(app):
                 "OCR'ing case study upload name=%s kind=%s bytes=%s",
                 upload.filename, upload.kind, upload.size,
             )
+            ocr_start = time.monotonic()
             text = case_study_parser.extract_text(upload.path, upload.kind)
+            ocr_seconds = time.monotonic() - ocr_start
+
+            llm_start = time.monotonic()
             data = extract_case_study_data(text)
+            llm_seconds = time.monotonic() - llm_start
+
+            logger.info(
+                "case study timing name=%s ocr_seconds=%.2f llm_seconds=%.2f total_seconds=%.2f",
+                upload.filename, ocr_seconds, llm_seconds, ocr_seconds + llm_seconds,
+            )
 
         return jsonify({"success": True, "data": data})
 
