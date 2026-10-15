@@ -55,6 +55,16 @@ def make_png():
     return buffer.getvalue()
 
 
+def make_docx(text="placeholder docx paragraph"):
+    import docx
+
+    document = docx.Document()
+    document.add_paragraph(text)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
 def post_case_study(client, content, filename, field="file"):
     if isinstance(content, (str, os.PathLike)):
         with open(content, "rb") as handle:
@@ -78,6 +88,23 @@ def fake_groq_vision(monkeypatch):
         monkeypatch.setattr(
             "extractors.case_study_extractor.chat_json_vision", _fake_chat_json_vision
         )
+
+    return _install
+
+
+@pytest.fixture
+def fake_groq_text(monkeypatch):
+    """Stub the text LLM call used by the DOCX path (no OCR/vision needed)."""
+
+    def _install(reply=None, capture=None):
+        payload = reply if reply is not None else dict(FAKE_LLM_REPLY)
+
+        def _fake_chat_json(system_prompt, user_prompt):
+            if capture is not None:
+                capture.append((system_prompt, user_prompt))
+            return payload
+
+        monkeypatch.setattr("extractors.case_study_extractor.chat_json", _fake_chat_json)
 
     return _install
 
@@ -132,6 +159,21 @@ def test_parses_image_case_study(client, fake_groq_vision):
     assert response.get_json()["data"]["client_name"] == "Nordwind Industries"
 
 
+def test_parses_docx_case_study(client, fake_groq_text):
+    captured = []
+    fake_groq_text(capture=captured)
+
+    response = post_case_study(client, make_docx(), "case-study.docx")
+    assert response.status_code == 200
+
+    body = response.get_json()
+    assert body["success"] is True
+    assert body["data"]["client_name"] == "Nordwind Industries"
+    # DOCX text is read directly - no OCR/vision call should happen.
+    _, user_prompt = captured[0]
+    assert "placeholder docx paragraph" in user_prompt
+
+
 # --- word-count enforcement --------------------------------------------------
 
 def test_results_are_clamped_to_max_words(client, fake_groq_vision):
@@ -152,10 +194,16 @@ def test_no_file_uploaded(client):
     assert response.get_json()["success"] is False
 
 
-def test_docx_is_rejected(client):
-    response = post_case_study(client, b"PK\x03\x04 not really a docx" * 20, "case-study.docx")
+def test_unsupported_extension_is_rejected(client):
+    response = post_case_study(client, b"plain text content", "case-study.txt")
     assert response.status_code == 415
-    assert "PDF or image" in response.get_json()["error"]
+    assert "Unsupported file type" in response.get_json()["error"]
+
+
+def test_corrupted_docx_is_rejected(client):
+    response = post_case_study(client, b"PK\x03\x04 not really a docx" * 20, "case-study.docx")
+    assert response.status_code == 422
+    assert "DOCX" in response.get_json()["error"]
 
 
 def test_vision_model_returns_unexpected_shape(client, fake_groq_vision):

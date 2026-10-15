@@ -40,8 +40,8 @@ from utils.url_fetcher import fetch_url_text
 
 UPLOAD_FIELD = "file"
 API_PREFIX = "/api/v1"
-CASE_STUDY_KINDS = {"pdf", "image"}
-CASE_STUDY_SUPPORTED_LABEL = "PDF, JPG, JPEG, PNG"
+CASE_STUDY_KINDS = {"pdf", "image", "docx"}
+CASE_STUDY_SUPPORTED_LABEL = "PDF, DOCX, JPG, JPEG, PNG"
 
 logger = logging.getLogger("resume_parser")
 
@@ -133,7 +133,7 @@ def register_routes(app):
         with SavedUpload(storage) as upload:
             if upload.kind not in CASE_STUDY_KINDS:
                 raise UnsupportedFileType(
-                    f"Case studies must be a PDF or image. Allowed types: "
+                    f"Case studies must be a PDF, DOCX or image. Allowed types: "
                     f"{CASE_STUDY_SUPPORTED_LABEL}"
                 )
 
@@ -141,20 +141,27 @@ def register_routes(app):
                 "reading case study upload name=%s kind=%s bytes=%s",
                 upload.filename, upload.kind, upload.size,
             )
-            render_start = time.monotonic()
-            images = [
-                ("image/png", png_bytes)
-                for png_bytes in case_study_parser.extract_page_images(upload.path, upload.kind)
-            ]
-            render_seconds = time.monotonic() - render_start
+            prep_start = time.monotonic()
+            if upload.kind == "docx":
+                # Already-digital text - no OCR/vision step needed.
+                text = parse_file(upload.path, upload.kind)
+            else:
+                images = [
+                    ("image/png", png_bytes)
+                    for png_bytes in case_study_parser.extract_page_images(upload.path, upload.kind)
+                ]
+            prep_seconds = time.monotonic() - prep_start
 
             llm_start = time.monotonic()
-            data = extract_case_study_data_from_images(images)
+            if upload.kind == "docx":
+                data = extract_case_study_data(text)
+            else:
+                data = extract_case_study_data_from_images(images)
             llm_seconds = time.monotonic() - llm_start
 
             logger.info(
-                "case study timing name=%s render_seconds=%.2f llm_seconds=%.2f total_seconds=%.2f",
-                upload.filename, render_seconds, llm_seconds, render_seconds + llm_seconds,
+                "case study timing name=%s prep_seconds=%.2f llm_seconds=%.2f total_seconds=%.2f",
+                upload.filename, prep_seconds, llm_seconds, prep_seconds + llm_seconds,
             )
 
         return jsonify({"success": True, "data": data})
