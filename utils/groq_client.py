@@ -5,6 +5,7 @@ Kept separate from the prompt-and-parse logic in
 the app's HTTP error types live in one place.
 """
 
+import base64
 import json
 import logging
 import os
@@ -19,6 +20,11 @@ except ImportError:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+#: Groq's only vision-capable free-tier model as of 2026-10; handles OCR
+#: directly from an image, so it replaces local Tesseract OCR for the
+#: case-study pipeline (Tesseract is CPU-bound and unusably slow on
+#: CPU-throttled hosts like Render's free tier).
+GROQ_VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
 GROQ_TEMPERATURE = float(os.environ.get("GROQ_TEMPERATURE", 0.2))
 GROQ_MAX_TOKENS = int(os.environ.get("GROQ_MAX_TOKENS", 1536))
 #: Bounds how long a stalled network call can occupy a worker (the SDK has
@@ -44,8 +50,8 @@ def _get_client():
     return _client
 
 
-def chat_json(system_prompt, user_prompt):
-    """Send a chat completion request and return the parsed JSON reply.
+def _create_completion(model, messages):
+    """Run a chat completion and return the parsed JSON reply.
 
     Raises :class:`GroqNotConfigured` if no API key is set, and
     :class:`GroqError` for any other failure (network, rate limit, bad
@@ -55,11 +61,8 @@ def chat_json(system_prompt, user_prompt):
 
     try:
         completion = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            model=model,
+            messages=messages,
             temperature=GROQ_TEMPERATURE,
             max_tokens=GROQ_MAX_TOKENS,
             response_format={"type": "json_object"},
@@ -86,3 +89,33 @@ def chat_json(system_prompt, user_prompt):
     except (AttributeError, IndexError, TypeError, ValueError) as exc:
         logger.warning("Unexpected Groq response shape: %s", exc)
         raise GroqError("Summarisation service returned an unexpected response") from exc
+
+
+def chat_json(system_prompt, user_prompt):
+    """Send a text-only chat completion request and return the parsed JSON reply."""
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    return _create_completion(GROQ_MODEL, messages)
+
+
+def chat_json_vision(system_prompt, user_text, images):
+    """Send a chat completion request that includes image inputs.
+
+    *images* is a list of ``(mime_type, raw_bytes)`` tuples. Each image is
+    base64-encoded as a ``data:`` URL, which is how Groq's OpenAI-compatible
+    vision endpoint accepts inline images (no separate upload step).
+    """
+    content = [{"type": "text", "text": user_text}]
+    for mime_type, raw_bytes in images:
+        encoded = base64.b64encode(raw_bytes).decode("ascii")
+        content.append(
+            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}}
+        )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": content},
+    ]
+    return _create_completion(GROQ_VISION_MODEL, messages)

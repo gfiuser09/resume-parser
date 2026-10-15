@@ -22,7 +22,11 @@ from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 load_dotenv()
 
 from extractors import DEFAULT_ENGINE, extract_resume_data
-from extractors.case_study_extractor import ensure_min_words, extract_case_study_data
+from extractors.case_study_extractor import (
+    ensure_min_words,
+    extract_case_study_data,
+    extract_case_study_data_from_images,
+)
 from parsers import parse_file
 from parsers import case_study_parser
 from utils.errors import InvalidURL, NoFileUploaded, ResumeParserError, UnsupportedFileType
@@ -134,20 +138,23 @@ def register_routes(app):
                 )
 
             logger.info(
-                "OCR'ing case study upload name=%s kind=%s bytes=%s",
+                "reading case study upload name=%s kind=%s bytes=%s",
                 upload.filename, upload.kind, upload.size,
             )
-            ocr_start = time.monotonic()
-            text = case_study_parser.extract_text(upload.path, upload.kind)
-            ocr_seconds = time.monotonic() - ocr_start
+            render_start = time.monotonic()
+            images = [
+                ("image/png", png_bytes)
+                for png_bytes in case_study_parser.extract_page_images(upload.path, upload.kind)
+            ]
+            render_seconds = time.monotonic() - render_start
 
             llm_start = time.monotonic()
-            data = extract_case_study_data(text)
+            data = extract_case_study_data_from_images(images)
             llm_seconds = time.monotonic() - llm_start
 
             logger.info(
-                "case study timing name=%s ocr_seconds=%.2f llm_seconds=%.2f total_seconds=%.2f",
-                upload.filename, ocr_seconds, llm_seconds, ocr_seconds + llm_seconds,
+                "case study timing name=%s render_seconds=%.2f llm_seconds=%.2f total_seconds=%.2f",
+                upload.filename, render_seconds, llm_seconds, render_seconds + llm_seconds,
             )
 
         return jsonify({"success": True, "data": data})

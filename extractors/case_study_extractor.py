@@ -8,7 +8,7 @@ guarantee.
 """
 
 from utils.errors import GroqError, GroqNotConfigured
-from utils.groq_client import chat_json
+from utils.groq_client import chat_json, chat_json_vision
 
 #: field -> (min words, max words), as specified by the case-study form.
 WORD_LIMITS = {
@@ -121,6 +121,65 @@ def ensure_min_words(data, source_text):
     return data
 
 
+VISION_SYSTEM_PROMPT = """You read the attached image(s) of a case-study document - scanned \
+pages or a photographed printout - and turn them into a structured JSON record for a \
+case-study submission form.
+
+The document may span multiple page images, and may be a noisy scan or photo: skewed angles, \
+glare, misread characters, repeated headers/footers, and page numbers. Read past this noise \
+and reconstruct the coherent underlying narrative.
+
+Produce a JSON object with exactly these keys:
+- "title": a short, specific title for the case study. Reuse the document's own title \
+if it states one, otherwise write one that names the client/industry and the problem solved.
+- "client_name": the client or organisation the work was done for, if the document names \
+one; otherwise an empty string. Never invent a name.
+- "situation": what existed before the work started - the problem, context, or starting \
+point. Between 30 and 200 words.
+- "process": the approach taken to address the situation - what was actually done. \
+Between 25 and 200 words.
+- "results": what was measurably achieved - outcomes and metrics. Between 25 and 200 \
+words. Use only figures that appear in the images; never fabricate statistics.
+
+Write situation/process/results as flowing prose paragraphs, not bullet lists, grounded \
+only in facts visible in the images. If the document does not cleanly separate situation \
+from process from results, make the best reasonable split based on context and \
+chronology rather than leaving a field empty.
+
+Respond with the JSON object only - no markdown fences, no commentary.
+"""
+
+
+def extract_case_study_data_from_images(images):
+    """Return the structured case-study fields read directly from page *images*.
+
+    *images* is a list of ``(mime_type, raw_bytes)`` tuples (see
+    :func:`parsers.case_study_parser.extract_page_images`). A vision model
+    performs OCR and extraction in one call, which sidesteps local Tesseract
+    OCR entirely - the CPU-bound step that makes this endpoint slow on
+    CPU-throttled hosts.
+    """
+    if not images:
+        return {**EMPTY_RESULT, "word_counts": dict(EMPTY_RESULT["word_counts"])}
+
+    raw = chat_json_vision(
+        VISION_SYSTEM_PROMPT, "Extract the case study fields from these page images.", images
+    )
+    if not isinstance(raw, dict):
+        raw = {}
+
+    data = {}
+    for field in FIELDS:
+        value = raw.get(field)
+        data[field] = value.strip() if isinstance(value, str) else ""
+
+    for field, (_, max_words) in WORD_LIMITS.items():
+        data[field] = _clamp_to_max_words(data[field], max_words)
+
+    data["word_counts"] = {field: len(data[field].split()) for field in WORD_LIMITS}
+    return data
+
+
 def extract_case_study_data(text):
     """Return the structured case-study fields extracted from OCR'd *text*."""
     text = (text or "").strip()
@@ -143,4 +202,10 @@ def extract_case_study_data(text):
     return data
 
 
-__all__ = ["EMPTY_RESULT", "WORD_LIMITS", "extract_case_study_data", "ensure_min_words"]
+__all__ = [
+    "EMPTY_RESULT",
+    "WORD_LIMITS",
+    "extract_case_study_data",
+    "extract_case_study_data_from_images",
+    "ensure_min_words",
+]

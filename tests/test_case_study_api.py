@@ -1,9 +1,9 @@
 """End-to-end tests for the parse-case-study endpoint.
 
-OCR is stubbed via the existing ``fake_ocr`` fixture (it patches the shared
-``pytesseract`` module, so it works for both the image and PDF-via-OCR
-paths). The Groq call is stubbed by monkeypatching ``chat_json`` where the
-extractor imported it, so no network access or API key is needed.
+The pipeline renders page images (real PyMuPDF/Pillow rendering - fast and
+deterministic, so it isn't stubbed) and sends them to a Groq vision model.
+The vision call itself is stubbed by monkeypatching ``chat_json_vision``
+where the extractor imported it, so no network access or API key is needed.
 """
 
 import io
@@ -12,24 +12,6 @@ import os
 import pytest
 
 CASE_STUDY_URL = "/api/v1/parse-case-study"
-
-CASE_STUDY_TEXT = """CSRD GAP ANALYSIS FOR A EUROPEAN MANUFACTURER
-
-Client: Nordwind Industries
-
-Before we were engaged, Nordwind had no structured view of where their
-sustainability reporting stood against the incoming CSRD requirements, and
-leadership was unsure which disclosures applied to their operations at all.
-
-Our team ran a double materiality assessment, mapped every ESRS datapoint
-against existing data sources, and interviewed department heads across
-finance, operations and HR to locate reporting gaps.
-
-Nordwind entered its first CSRD reporting cycle with 92% of mandatory
-datapoints already sourced, cut external audit prep time by three weeks,
-and avoided two material compliance gaps that would otherwise have been
-flagged by their auditor.
-"""
 
 FAKE_LLM_REPLY = {
     "title": "CSRD gap analysis for a European manufacturer",
@@ -59,10 +41,18 @@ def make_pdf(num_pages=1):
     document = pymupdf.open()
     for _ in range(num_pages):
         page = document.new_page()
-        page.insert_text((72, 72), "placeholder - OCR is stubbed in tests")
+        page.insert_text((72, 72), "placeholder page")
     payload = document.tobytes()
     document.close()
     return payload
+
+
+def make_png():
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (10, 10), "white").save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def post_case_study(client, content, filename, field="file"):
@@ -74,19 +64,19 @@ def post_case_study(client, content, filename, field="file"):
 
 
 @pytest.fixture
-def fake_groq(monkeypatch):
-    """Stub the LLM call so tests don't need a network connection or API key."""
+def fake_groq_vision(monkeypatch):
+    """Stub the vision LLM call so tests don't need a network connection or API key."""
 
     def _install(reply=None, capture=None):
         payload = reply if reply is not None else dict(FAKE_LLM_REPLY)
 
-        def _fake_chat_json(system_prompt, user_prompt):
+        def _fake_chat_json_vision(system_prompt, user_text, images):
             if capture is not None:
-                capture.append((system_prompt, user_prompt))
+                capture.append((system_prompt, user_text, images))
             return payload
 
         monkeypatch.setattr(
-            "extractors.case_study_extractor.chat_json", _fake_chat_json
+            "extractors.case_study_extractor.chat_json_vision", _fake_chat_json_vision
         )
 
     return _install
@@ -94,9 +84,8 @@ def fake_groq(monkeypatch):
 
 # --- happy paths -------------------------------------------------------------
 
-def test_parses_pdf_case_study(client, fake_ocr, fake_groq):
-    fake_ocr(CASE_STUDY_TEXT)
-    fake_groq()
+def test_parses_pdf_case_study(client, fake_groq_vision):
+    fake_groq_vision()
 
     response = post_case_study(client, make_pdf(), "case-study.pdf")
     assert response.status_code == 200
@@ -112,40 +101,43 @@ def test_parses_pdf_case_study(client, fake_ocr, fake_groq):
     assert data["word_counts"]["results"] == len(data["results"].split())
 
 
-def test_multi_page_pdf_concatenates_all_pages(client, fake_ocr, fake_groq):
-    fake_ocr(CASE_STUDY_TEXT)
+def test_multi_page_pdf_sends_one_image_per_page(client, fake_groq_vision):
     captured = []
-    fake_groq(capture=captured)
+    fake_groq_vision(capture=captured)
 
     response = post_case_study(client, make_pdf(num_pages=3), "case-study.pdf")
     assert response.status_code == 200
 
-    _, user_prompt = captured[0]
-    # Each of the 3 (identically stubbed) OCR'd pages should appear once.
-    assert user_prompt.count("CSRD GAP ANALYSIS") == 3
+    _, _, images = captured[0]
+    assert len(images) == 3
+    assert all(mime == "image/png" for mime, _ in images)
 
 
-def test_parses_image_case_study(client, fake_ocr, fake_groq):
-    fake_ocr(CASE_STUDY_TEXT)
-    fake_groq()
+def test_pdf_pages_are_capped_at_three(client, fake_groq_vision):
+    captured = []
+    fake_groq_vision(capture=captured)
 
-    png_bytes = io.BytesIO()
-    from PIL import Image
+    response = post_case_study(client, make_pdf(num_pages=5), "case-study.pdf")
+    assert response.status_code == 200
 
-    Image.new("RGB", (10, 10), "white").save(png_bytes, format="PNG")
+    _, _, images = captured[0]
+    assert len(images) == 3
 
-    response = post_case_study(client, png_bytes.getvalue(), "case-study.png")
+
+def test_parses_image_case_study(client, fake_groq_vision):
+    fake_groq_vision()
+
+    response = post_case_study(client, make_png(), "case-study.png")
     assert response.status_code == 200
     assert response.get_json()["data"]["client_name"] == "Nordwind Industries"
 
 
 # --- word-count enforcement --------------------------------------------------
 
-def test_results_are_clamped_to_max_words(client, fake_ocr, fake_groq):
-    fake_ocr(CASE_STUDY_TEXT)
+def test_results_are_clamped_to_max_words(client, fake_groq_vision):
     long_reply = dict(FAKE_LLM_REPLY)
     long_reply["results"] = " ".join(["word"] * 250) + "."
-    fake_groq(reply=long_reply)
+    fake_groq_vision(reply=long_reply)
 
     response = post_case_study(client, make_pdf(), "case-study.pdf")
     data = response.get_json()["data"]
@@ -166,19 +158,21 @@ def test_docx_is_rejected(client):
     assert "PDF or image" in response.get_json()["error"]
 
 
-def test_ocr_returning_nothing(client, fake_ocr):
-    fake_ocr("   \n  ")
+def test_vision_model_returns_unexpected_shape(client, fake_groq_vision):
+    fake_groq_vision(reply="not a dict")
+
     response = post_case_study(client, make_pdf(), "case-study.pdf")
-    assert response.status_code == 422
-    assert "OCR could not find any text" in response.get_json()["error"]
+    assert response.status_code == 200
+    data = response.get_json()["data"]
+    assert data["title"] == ""
+    assert data["word_counts"] == {"situation": 0, "process": 0, "results": 0}
 
 
-def test_missing_groq_api_key(client, fake_ocr, monkeypatch):
+def test_missing_groq_api_key(client, monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     import utils.groq_client as groq_client
 
     monkeypatch.setattr(groq_client, "_client", None)
-    fake_ocr(CASE_STUDY_TEXT)
 
     response = post_case_study(client, make_pdf(), "case-study.pdf")
     assert response.status_code == 503
